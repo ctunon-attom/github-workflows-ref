@@ -67,6 +67,9 @@ jobs:
       group: deploy-${{ needs.resolve-env.outputs.environment }}
       cancel-in-progress: false
 
+    env:
+      DRY_RUN: ${{ secrets.RENDER_API_KEY == '' && 'true' || 'false' }}
+
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
         with:
@@ -76,6 +79,11 @@ jobs:
       - name: Record current deploy
         id: current
         run: |
+          if [ "$DRY_RUN" = "true" ]; then
+            echo "::notice::DRY RUN — no secrets configured. Simulating deploy."
+            echo "deploy_id=dry-run-000" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
           source .github/scripts/render-deploy-helpers.sh
           DEPLOY_ID=$(get_latest_deploy_id "$RENDER_SERVICE_ID_WEB")
           echo "deploy_id=$DEPLOY_ID" >> "$GITHUB_OUTPUT"
@@ -85,12 +93,20 @@ jobs:
 
       - name: Trigger Blueprint sync
         run: |
+          if [ "$DRY_RUN" = "true" ]; then
+            echo "::notice::DRY RUN — would trigger Blueprint sync hook"
+            exit 0
+          fi
           curl -sf -X POST "${{ secrets.RENDER_BLUEPRINT_SYNC_HOOK }}" \
             -H "Content-Type: application/json" \
             -d '{}' || echo "::warning::Blueprint sync hook returned non-zero"
 
       - name: Wait for deploy and poll status
         run: |
+          if [ "$DRY_RUN" = "true" ]; then
+            echo "::notice::DRY RUN — would poll deploy until live"
+            exit 0
+          fi
           source .github/scripts/render-deploy-helpers.sh
           DEPLOY_ID=$(wait_for_new_deploy_or_trigger "$RENDER_SERVICE_ID_WEB" "${{ steps.current.outputs.deploy_id }}")
           echo "New deploy: $DEPLOY_ID"
@@ -101,6 +117,14 @@ jobs:
 
       - name: Smoke check
         run: |
+          if [ "$DRY_RUN" = "true" ]; then
+            echo "::notice::DRY RUN — would check /health/ endpoint"
+            echo "### Deploy Summary (dry run)" >> "$GITHUB_STEP_SUMMARY"
+            echo "- **Environment:** ${{ needs.resolve-env.outputs.environment }}" >> "$GITHUB_STEP_SUMMARY"
+            echo "- **Branch:** ${{ needs.resolve-env.outputs.branch }}" >> "$GITHUB_STEP_SUMMARY"
+            echo "- **Status:** Simulated success (no secrets configured)" >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
           STATUS=$(curl -sf -o /dev/null -w "%{http_code}" "${{ secrets.RENDER_HEALTH_URL }}/health/")
           if [ "$STATUS" != "200" ]; then
             echo "::error::Health check failed with status $STATUS"
