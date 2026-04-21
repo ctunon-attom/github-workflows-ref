@@ -1,0 +1,15 @@
+{% extends "taskapp/base.html" %}
+
+{% block title %}Delete Task{% endblock %}
+
+{% block content %}
+<h1>Delete Task</h1>
+<p>Are you sure you want to delete <strong>{{ task.title }}</strong>?</p>
+<form method="post">
+    {% csrf_token %}
+    <div class="actions">
+        <button type="submit" class="btn btn-danger">Delete</button>
+        <a href="{% url 'taskapp:task_list' %}" class="btn">Cancel</a>
+    </div>
+</form>
+{% endblock %}

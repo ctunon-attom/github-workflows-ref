@@ -1,0 +1,91 @@
+name: CI
+
+on:
+  push:
+    branches: [master, staging, develop]
+  pull_request:
+    branches: [master, staging, develop]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  checks: write
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/master' && github.ref != 'refs/heads/staging' }}
+
+jobs:
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065  # v5
+        with:
+          python-version: "3.13"
+
+      - name: Install pipenv
+        run: pip install pipenv
+
+      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830  # v4
+        with:
+          path: ~/.local/share/virtualenvs
+          key: pipenv-${{ runner.os }}-${{ hashFiles('Pipfile.lock') }}
+          restore-keys: pipenv-${{ runner.os }}-
+
+      - name: Install dependencies
+        run: pipenv install --dev --deploy
+
+      - name: Django system check
+        run: pipenv run python manage.py check
+        env:
+          DJANGO_SETTINGS_MODULE: config.test_settings
+
+      - name: Check for missing migrations
+        run: pipenv run python manage.py makemigrations --check --dry-run
+        env:
+          DJANGO_SETTINGS_MODULE: config.test_settings
+
+      - name: Run tests with coverage
+        run: |
+          pipenv run pytest \
+            --cov=taskapp \
+            --cov-report=term-missing \
+            --cov-report=xml \
+            --cov-fail-under=80
+
+      - name: Coverage summary
+        if: always()
+        run: |
+          echo "## Coverage Report" >> "$GITHUB_STEP_SUMMARY"
+          pipenv run coverage report --format=markdown >> "$GITHUB_STEP_SUMMARY" || true
+
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065  # v5
+        with:
+          python-version: "3.13"
+
+      - name: Install pipenv
+        run: pip install pipenv
+
+      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830  # v4
+        with:
+          path: ~/.local/share/virtualenvs
+          key: pipenv-${{ runner.os }}-${{ hashFiles('Pipfile.lock') }}
+          restore-keys: pipenv-${{ runner.os }}-
+
+      - name: Install dependencies
+        run: pipenv install --dev --deploy
+
+      - name: Ruff check
+        run: pipenv run ruff check taskapp/ config/
+
+      - name: Ruff format check
+        run: pipenv run ruff format --check taskapp/ config/

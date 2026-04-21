@@ -1,0 +1,109 @@
+name: Deploy
+
+on:
+  workflow_run:
+    workflows: ["CI"]
+    types: [completed]
+    branches: [master, staging, develop]
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: "Target environment"
+        required: true
+        type: choice
+        options:
+          - production
+          - staging
+          - development
+
+permissions:
+  contents: read
+
+jobs:
+  resolve-env:
+    name: Resolve environment
+    runs-on: ubuntu-latest
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      github.event.workflow_run.conclusion == 'success'
+    outputs:
+      environment: ${{ steps.resolve.outputs.environment }}
+      branch: ${{ steps.resolve.outputs.branch }}
+    steps:
+      - name: Determine environment from branch
+        id: resolve
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            ENV="${{ inputs.environment }}"
+          else
+            BRANCH="${{ github.event.workflow_run.head_branch }}"
+            case "$BRANCH" in
+              master)  ENV="production" ;;
+              staging) ENV="staging" ;;
+              develop) ENV="development" ;;
+              *)       echo "::error::Unexpected branch: $BRANCH"; exit 1 ;;
+            esac
+          fi
+
+          case "$ENV" in
+            production)  BRANCH="master" ;;
+            staging)     BRANCH="staging" ;;
+            development) BRANCH="develop" ;;
+          esac
+
+          echo "environment=$ENV" >> "$GITHUB_OUTPUT"
+          echo "branch=$BRANCH" >> "$GITHUB_OUTPUT"
+          echo "### Deploy Target" >> "$GITHUB_STEP_SUMMARY"
+          echo "- **Environment:** $ENV" >> "$GITHUB_STEP_SUMMARY"
+          echo "- **Branch:** $BRANCH" >> "$GITHUB_STEP_SUMMARY"
+
+  deploy:
+    name: Deploy to ${{ needs.resolve-env.outputs.environment }}
+    needs: resolve-env
+    runs-on: ubuntu-latest
+    environment: ${{ needs.resolve-env.outputs.environment }}
+
+    concurrency:
+      group: deploy-${{ needs.resolve-env.outputs.environment }}
+      cancel-in-progress: false
+
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
+        with:
+          ref: ${{ needs.resolve-env.outputs.branch }}
+          sparse-checkout: .github/scripts
+
+      - name: Record current deploy
+        id: current
+        run: |
+          source .github/scripts/render-deploy-helpers.sh
+          DEPLOY_ID=$(get_latest_deploy_id "$RENDER_SERVICE_ID_WEB")
+          echo "deploy_id=$DEPLOY_ID" >> "$GITHUB_OUTPUT"
+        env:
+          RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
+          RENDER_SERVICE_ID_WEB: ${{ secrets.RENDER_SERVICE_ID_WEB }}
+
+      - name: Trigger Blueprint sync
+        run: |
+          curl -sf -X POST "${{ secrets.RENDER_BLUEPRINT_SYNC_HOOK }}" \
+            -H "Content-Type: application/json" \
+            -d '{}' || echo "::warning::Blueprint sync hook returned non-zero"
+
+      - name: Wait for deploy and poll status
+        run: |
+          source .github/scripts/render-deploy-helpers.sh
+          DEPLOY_ID=$(wait_for_new_deploy_or_trigger "$RENDER_SERVICE_ID_WEB" "${{ steps.current.outputs.deploy_id }}")
+          echo "New deploy: $DEPLOY_ID"
+          poll_deploy "$RENDER_SERVICE_ID_WEB" "$DEPLOY_ID"
+        env:
+          RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
+          RENDER_SERVICE_ID_WEB: ${{ secrets.RENDER_SERVICE_ID_WEB }}
+
+      - name: Smoke check
+        run: |
+          STATUS=$(curl -sf -o /dev/null -w "%{http_code}" "${{ secrets.RENDER_HEALTH_URL }}/health/")
+          if [ "$STATUS" != "200" ]; then
+            echo "::error::Health check failed with status $STATUS"
+            exit 1
+          fi
+          echo "Health check passed (HTTP $STATUS)"

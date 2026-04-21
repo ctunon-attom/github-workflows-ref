@@ -1,0 +1,20 @@
+<form method="post"
+      action="{% if task %}{% url 'taskapp:task_update' task.pk %}{% else %}{% url 'taskapp:task_create' %}{% endif %}"
+      hx-post="{% if task %}{% url 'taskapp:task_update' task.pk %}{% else %}{% url 'taskapp:task_create' %}{% endif %}"
+      hx-target="{% if task %}#task-{{ task.pk }}{% else %}#task-list{% endif %}"
+      hx-swap="{% if task %}outerHTML{% else %}beforeend{% endif %}">
+    {% csrf_token %}
+    {% for field in form %}
+    <div class="form-group">
+        <label for="{{ field.id_for_label }}">{{ field.label }}</label>
+        {{ field }}
+    </div>
+    {% endfor %}
+    <div class="actions">
+        <button type="submit" class="btn btn-primary">Save</button>
+        <button type="button" class="btn"
+                hx-get="{% url 'taskapp:task_list' %}"
+                hx-target="{% if task %}#task-{{ task.pk }}{% else %}#task-form-container{% endif %}"
+                hx-swap="{% if task %}outerHTML{% else %}innerHTML{% endif %}">Cancel</button>
+    </div>
+</form>

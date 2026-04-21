@@ -1,0 +1,15 @@
+# Workflow and deploy infrastructure — require review from repo owner
+.github/workflows/  @ctunon-attom
+.github/scripts/    @ctunon-attom
+
+# Deploy config
+render.yaml         @ctunon-attom
+Dockerfile          @ctunon-attom
+.dockerignore       @ctunon-attom
+
+# Application settings
+config/settings.py  @ctunon-attom
+
+# Dependency manifests
+Pipfile             @ctunon-attom
+Pipfile.lock        @ctunon-attom

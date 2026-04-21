@@ -1,0 +1,18 @@
+[tool.ruff]
+target-version = "py313"
+line-length = 100
+src = ["taskapp", "config"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "N", "W", "UP", "S", "B", "A", "C4", "DJ"]
+
+[tool.ruff.lint.per-file-ignores]
+"taskapp/tests/*" = ["S101"]
+
+[tool.pytest.ini_options]
+DJANGO_SETTINGS_MODULE = "config.test_settings"
+python_files = "test_*.py"
+python_classes = "Test*"
+python_functions = "test_*"
+addopts = "-v --tb=short --strict-markers"
+testpaths = ["taskapp/tests"]

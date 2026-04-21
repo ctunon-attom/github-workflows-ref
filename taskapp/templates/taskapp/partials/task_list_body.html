@@ -1,0 +1,5 @@
+{% for task in tasks %}
+    {% include "taskapp/partials/task_row.html" %}
+{% empty %}
+    <p style="color: #888;">No tasks yet.</p>
+{% endfor %}
