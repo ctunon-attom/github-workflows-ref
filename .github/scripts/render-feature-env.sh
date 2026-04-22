@@ -119,8 +119,9 @@ parse_service_spec() {
   svc_runtime=$(echo "$svc_json" | jq -r '.runtime // "python"')
 
   # Blueprint spec and REST API use different enums for the same service
-  # kind. Blueprint: web/pserv/worker/cron/keyvalue. REST API:
+  # kind. Blueprint: web/pserv/worker/cron. REST API:
   # web_service/private_service/background_worker/cron_job/static_site.
+  # Key Value instances use a separate API endpoint and are not handled here.
   case "$svc_type" in
     web)    svc_type="web_service" ;;
     pserv)  svc_type="private_service" ;;
@@ -287,6 +288,17 @@ delete_service() {
   render_api DELETE "/services/$service_id" > /dev/null
 }
 
+# Best-effort rollback. Deletes each service id passed as an argument and
+# swallows individual errors so one failed delete doesn't block the rest.
+# Call from create_feature_env's error paths to avoid leaking services that
+# would otherwise block retries via the idempotency check.
+cleanup_created_services() {
+  local sid
+  for sid in "$@"; do
+    delete_service "$sid" || true
+  done
+}
+
 # =============================================================================
 # ORCHESTRATORS (blueprint-driven)
 # =============================================================================
@@ -353,6 +365,7 @@ create_feature_env() {
 
     if [ -z "$service_id" ]; then
       echo "ERROR: Failed to create service. Response: $response" >&2
+      cleanup_created_services "${service_ids[@]}"
       return 1
     fi
 
@@ -377,6 +390,7 @@ create_feature_env() {
     deploy_id=$(trigger_feature_deploy "$sid") || {
       if [ "$sid" = "$web_id" ]; then
         echo "ERROR: Failed to trigger deploy for web service $sid" >&2
+        cleanup_created_services "${service_ids[@]}"
         return 1
       fi
       echo "WARNING: Failed to trigger deploy for $sid" >&2
@@ -391,6 +405,7 @@ create_feature_env() {
   # --- Poll web deploy ---
   if [ -z "$web_deploy_id" ] || ! poll_feature_deploy "$web_id" "$web_deploy_id"; then
     echo "ERROR: Web deploy did not reach live state." >&2
+    cleanup_created_services "${service_ids[@]}"
     return 1
   fi
 
