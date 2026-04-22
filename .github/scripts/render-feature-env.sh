@@ -85,9 +85,12 @@ render_blueprint() {
     return 1
   fi
 
+  local escaped_branch
+  escaped_branch=$(printf '%s' "$branch" | sed 's/[\\&|]/\\&/g')
+
   sed \
     -e "s|{{SLUG}}|${slug}|g" \
-    -e "s|{{BRANCH}}|${branch}|g" \
+    -e "s|{{BRANCH}}|${escaped_branch}|g" \
     "$BLUEPRINT_PATH"
 }
 
@@ -108,6 +111,20 @@ parse_service_spec() {
   svc_type=$(echo "$svc_json" | jq -r '.type')
   svc_runtime=$(echo "$svc_json" | jq -r '.runtime // "python"')
 
+  # Blueprint spec and REST API use different enums for the same service
+  # kind. Blueprint: web/pserv/worker/cron/keyvalue. REST API:
+  # web_service/private_service/background_worker/cron_job/static_site.
+  case "$svc_type" in
+    web)    svc_type="web_service" ;;
+    pserv)  svc_type="private_service" ;;
+    worker) svc_type="background_worker" ;;
+    cron)   svc_type="cron_job" ;;
+    web_service|static_site|private_service|background_worker|cron_job) ;;
+    *)
+      echo "ERROR: Unknown service type: $svc_type" >&2
+      return 1 ;;
+  esac
+
   echo "$svc_json" | jq \
     --arg ownerId "$RENDER_OWNER_ID" \
     --arg repo "$RENDER_REPO_URL" \
@@ -120,7 +137,11 @@ parse_service_spec() {
       ownerId: $ownerId,
       repo: $repo,
       branch: .branch,
-      autoDeploy: (.autoDeploy // "no"),
+      autoDeploy: (
+        if .autoDeploy == true or .autoDeploy == "yes" then "yes"
+        else "no"
+        end
+      ),
       serviceDetails: {
         runtime: $runtime,
         plan: .plan,
