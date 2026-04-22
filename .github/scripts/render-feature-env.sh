@@ -362,11 +362,16 @@ create_feature_env() {
   done
 
   # --- Trigger deploys on all services ---
+  # Web service failures are fatal; non-web (workers, etc.) warn and continue.
   echo "Triggering deploys..." >&2
   local web_deploy_id=""
   for sid in "${service_ids[@]}"; do
     local deploy_id
     deploy_id=$(trigger_feature_deploy "$sid") || {
+      if [ "$sid" = "$web_id" ]; then
+        echo "ERROR: Failed to trigger deploy for web service $sid" >&2
+        return 1
+      fi
       echo "WARNING: Failed to trigger deploy for $sid" >&2
       continue
     }
@@ -377,10 +382,9 @@ create_feature_env() {
   done
 
   # --- Poll web deploy ---
-  if [ -n "$web_deploy_id" ]; then
-    poll_feature_deploy "$web_id" "$web_deploy_id" || {
-      echo "WARNING: Web deploy did not reach live state." >&2
-    }
+  if [ -z "$web_deploy_id" ] || ! poll_feature_deploy "$web_id" "$web_deploy_id"; then
+    echo "ERROR: Web deploy did not reach live state." >&2
+    return 1
   fi
 
   echo "========================================" >&2
