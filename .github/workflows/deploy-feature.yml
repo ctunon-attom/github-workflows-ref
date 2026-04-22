@@ -42,8 +42,13 @@ jobs:
       - name: Wait for CI to succeed
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          BRANCH: ${{ github.head_ref || inputs.branch }}
         run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            SHA="${{ github.event.pull_request.head.sha }}"
+          else
+            SHA=$(gh api "repos/${{ github.repository }}/commits/${BRANCH}" --jq '.sha')
+          fi
           echo "Waiting for CI check 'Test' on $SHA..."
           for i in $(seq 1 60); do
             result=$(gh api "repos/${{ github.repository }}/commits/${SHA}/check-runs" \
@@ -97,12 +102,13 @@ jobs:
         id: slug
         env:
           BRANCH: ${{ github.head_ref || inputs.branch }}
+          PR_NUMBER: ${{ github.event.pull_request.number || '' }}
         run: |
           source .github/scripts/render-feature-env.sh
-          SLUG=$(sanitize_branch_name "$BRANCH")
+          SLUG=$(sanitize_branch_name "$BRANCH" "$PR_NUMBER")
           echo "branch=$BRANCH" >> "$GITHUB_OUTPUT"
           echo "slug=$SLUG" >> "$GITHUB_OUTPUT"
-          echo "Slug: $SLUG (from branch: $BRANCH)"
+          echo "Slug: $SLUG (from branch: $BRANCH, PR: ${PR_NUMBER:-none})"
 
       - name: Check for existing environment
         id: check
@@ -259,9 +265,10 @@ jobs:
         id: slug
         env:
           BRANCH: ${{ github.head_ref }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
         run: |
           source .github/scripts/render-feature-env.sh
-          SLUG=$(sanitize_branch_name "$BRANCH")
+          SLUG=$(sanitize_branch_name "$BRANCH" "$PR_NUMBER")
           echo "slug=$SLUG" >> "$GITHUB_OUTPUT"
 
       - name: Destroy feature environment

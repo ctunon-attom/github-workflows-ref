@@ -27,16 +27,26 @@ BLUEPRINT_PATH="${BLUEPRINT_PATH:-.config/feature/render.yaml}"
 
 # -----------------------------------------------------------------------------
 # Sanitize a git branch name into a Render-safe slug.
+# Accepts optional disambiguator (e.g. PR number) to prevent collisions
+# when different branches share the same 28-char prefix.
+# Usage: sanitize_branch_name <branch> [disambiguator]
 # -----------------------------------------------------------------------------
 sanitize_branch_name() {
   local branch="$1"
-  echo "$branch" \
+  local disambiguator="${2:-}"
+  local slug
+  slug=$(echo "$branch" \
     | tr '[:upper:]' '[:lower:]' \
     | sed -E 's#^(feat|feature|fix|hotfix|bugfix|chore|release|refactor)[/\-]##' \
     | sed 's/[^a-z0-9]/-/g' \
     | sed 's/--*/-/g' \
-    | sed 's/^-//;s/-$//' \
-    | cut -c1-28
+    | sed 's/^-//;s/-$//')
+
+  if [ -n "$disambiguator" ]; then
+    slug="${slug}-${disambiguator}"
+  fi
+
+  echo "$slug" | cut -c1-28
 }
 
 # -----------------------------------------------------------------------------
@@ -263,11 +273,7 @@ cancel_auto_deploy() {
 trigger_feature_deploy() {
   local service_id="$1"
   local response
-  response=$(curl --silent --show-error \
-    -X POST \
-    -H "Authorization: Bearer ${RENDER_API_KEY}" \
-    -H "Accept: application/json" \
-    "$RENDER_API/services/$service_id/deploys")
+  response=$(render_api POST "/services/$service_id/deploys")
 
   local deploy_id
   deploy_id=$(echo "$response" | jq -r '.id // .deploy.id // empty' 2>/dev/null)
@@ -313,17 +319,13 @@ poll_feature_deploy() {
 delete_service() {
   local service_id="$1"
   echo "Deleting service: $service_id" >&2
-  curl --silent --output /dev/null --write-out "  HTTP %{http_code}\n" \
-    -X DELETE -H "Authorization: Bearer ${RENDER_API_KEY}" \
-    "$RENDER_API/services/$service_id" >&2
+  render_api DELETE "/services/$service_id" > /dev/null
 }
 
 delete_postgres() {
   local pg_id="$1"
   echo "Deleting postgres: $pg_id" >&2
-  curl --silent --output /dev/null --write-out "  HTTP %{http_code}\n" \
-    -X DELETE -H "Authorization: Bearer ${RENDER_API_KEY}" \
-    "$RENDER_API/postgres/$pg_id" >&2
+  render_api DELETE "/postgres/$pg_id" > /dev/null
 }
 
 # =============================================================================

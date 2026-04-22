@@ -16,7 +16,7 @@
 
 databases:
   - name: "ref-feat-{{SLUG}}-db"
-    plan: free
+    plan: basic_256mb
     version: "16"
     databaseName: "ref_feat_{{SLUG_UNDERSCORE}}"
     databaseUser: ref_feat_user

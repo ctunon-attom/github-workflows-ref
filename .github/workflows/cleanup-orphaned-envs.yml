@@ -82,10 +82,11 @@ jobs:
             --repo "$GH_REPO" \
             --base staging \
             --state open \
-            --json headRefName \
-            --jq '.[].headRefName' \
-            | while read -r branch; do
-                sanitize_branch_name "$branch"
+            --limit 1000 \
+            --json headRefName,number \
+            --jq '.[] | "\(.headRefName)\t\(.number)"' \
+            | while IFS=$'\t' read -r branch pr_num; do
+                sanitize_branch_name "$branch" "$pr_num"
               done | sort -u)
 
           echo "Open PR slugs: $OPEN_PR_SLUGS"
