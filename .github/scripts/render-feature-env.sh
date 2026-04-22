@@ -85,8 +85,15 @@ render_blueprint() {
     return 1
   fi
 
+  # The template has `branch: "{{BRANCH}}"` — a YAML double-quoted scalar.
+  # Two-stage escape, applied in order:
+  #   1. YAML-escape \ → \\ and " → \" so the output stays parseable.
+  #   2. Sed-escape \, &, | so the replacement string is literal (this also
+  #      re-escapes the \ introduced by stage 1).
+  # Slug is already [a-z0-9-] via sanitize_branch_name, so no escape needed.
   local escaped_branch
-  escaped_branch=$(printf '%s' "$branch" | sed 's/[\\&|]/\\&/g')
+  escaped_branch=$(printf '%s' "$branch" \
+    | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g' -e 's/[\\&|]/\\&/g')
 
   sed \
     -e "s|{{SLUG}}|${slug}|g" \
