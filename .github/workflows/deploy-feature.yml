@@ -170,9 +170,7 @@ jobs:
           source .github/scripts/render-feature-env.sh
           DEPLOY_ID=$(trigger_feature_deploy "$WEB_ID")
           echo "Triggered deploy: $DEPLOY_ID"
-          poll_feature_deploy "$WEB_ID" "$DEPLOY_ID" || {
-            echo "WARNING: Deploy did not reach live state."
-          }
+          poll_feature_deploy "$WEB_ID" "$DEPLOY_ID"
           echo "web_url=https://ref-feat-${SLUG}-web.onrender.com" >> "$GITHUB_OUTPUT"
           echo "web_id=$WEB_ID" >> "$GITHUB_OUTPUT"
 

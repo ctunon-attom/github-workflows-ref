@@ -6,28 +6,24 @@
 # and creates services via the Render API.
 #
 # Supported placeholders (replaced at deploy time):
-#   {{SLUG}}         — sanitized branch name (e.g. "add-user-search")
-#   {{BRANCH}}       — git branch name (e.g. "feat/add-user-search")
-#   {{DATABASE_URL}} — internal postgres connection string
+#   {{SLUG}}    — sanitized branch name (e.g. "add-user-search")
+#   {{BRANCH}}  — git branch name (e.g. "feat/add-user-search")
 #
 # To change what a feature env looks like (plan, env vars, build command),
 # edit this file — not the bash scripts.
+#
+# The app uses SQLite — each feature env is self-contained, no database
+# provisioning required. Data does not persist across redeploys; this repo
+# is a pipeline reference, not a production app.
 # =============================================================================
-
-databases:
-  - name: "ref-feat-{{SLUG}}-db"
-    plan: basic_256mb
-    version: "16"
-    databaseName: "ref_feat_{{SLUG_UNDERSCORE}}"
-    databaseUser: ref_feat_user
 
 services:
   - name: "ref-feat-{{SLUG}}-web"
-    type: web_service
+    type: web
     runtime: python
     plan: free
     branch: "{{BRANCH}}"
-    autoDeploy: "no"
+    autoDeploy: false
     numInstances: 1
     healthCheckPath: /health/
     buildCommand: "pip install pipenv && pipenv install --deploy --ignore-pipfile"
@@ -46,7 +42,5 @@ services:
         value: "False"
       - key: ALLOWED_HOSTS
         value: ".onrender.com"
-      - key: DATABASE_URL
-        value: "{{DATABASE_URL}}"
       - key: PYTHON_VERSION
         value: "3.13.2"
