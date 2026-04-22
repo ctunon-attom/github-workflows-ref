@@ -1,0 +1,52 @@
+# =============================================================================
+# Feature Environment Blueprint Template
+# =============================================================================
+# This file defines the shape of a feature environment on Render.
+# The deploy-feature workflow reads this template, substitutes variables,
+# and creates services via the Render API.
+#
+# Supported placeholders (replaced at deploy time):
+#   {{SLUG}}         — sanitized branch name (e.g. "add-user-search")
+#   {{BRANCH}}       — git branch name (e.g. "feat/add-user-search")
+#   {{DATABASE_URL}} — internal postgres connection string
+#
+# To change what a feature env looks like (plan, env vars, build command),
+# edit this file — not the bash scripts.
+# =============================================================================
+
+databases:
+  - name: "ref-feat-{{SLUG}}-db"
+    plan: free
+    version: "16"
+    databaseName: "ref_feat_{{SLUG_UNDERSCORE}}"
+    databaseUser: ref_feat_user
+
+services:
+  - name: "ref-feat-{{SLUG}}-web"
+    type: web_service
+    runtime: python
+    plan: free
+    branch: "{{BRANCH}}"
+    autoDeploy: "no"
+    numInstances: 1
+    healthCheckPath: /health/
+    buildCommand: "pip install pipenv && pipenv install --deploy --ignore-pipfile"
+    startCommand: >-
+      python manage.py migrate &&
+      python manage.py collectstatic --noinput &&
+      gunicorn config.wsgi:application
+      --bind 0.0.0.0:$PORT
+      --workers 2
+      --threads 2
+      --timeout 120
+    envVars:
+      - key: DJANGO_SETTINGS_MODULE
+        value: config.settings
+      - key: DEBUG
+        value: "False"
+      - key: ALLOWED_HOSTS
+        value: ".onrender.com"
+      - key: DATABASE_URL
+        value: "{{DATABASE_URL}}"
+      - key: PYTHON_VERSION
+        value: "3.13.2"

@@ -84,6 +84,15 @@ jobs:
       - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
 
+      - name: Install yq
+        run: |
+          YQ_VERSION="v4.44.2"
+          YQ_SHA256="246b781828353a59fb04ffaada241f78a8f3f25c623047b40306def1f6806e71"
+          sudo curl -sSL "https://github.com/mikefarah/yq/releases/download/${YQ_VERSION}/yq_linux_amd64" \
+            -o /usr/local/bin/yq
+          echo "${YQ_SHA256}  /usr/local/bin/yq" | sha256sum -c -
+          sudo chmod +x /usr/local/bin/yq
+
       - name: Derive slug
         id: slug
         env:
@@ -138,7 +147,7 @@ jobs:
             exit 0
           fi
           source .github/scripts/render-feature-env.sh
-          RESULT=$(create_feature_env "$FEAT_BRANCH" "$SLUG" "free" "free")
+          RESULT=$(create_feature_env "$FEAT_BRANCH" "$SLUG")
           WEB_URL=$(echo "$RESULT" | jq -r '.web_url')
           WEB_ID=$(echo "$RESULT" | jq -r '.web_service_id')
           echo "web_url=$WEB_URL" >> "$GITHUB_OUTPUT"
