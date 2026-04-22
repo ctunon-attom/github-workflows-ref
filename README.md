@@ -12,6 +12,10 @@ git clone https://github.com/ctunon-attom/github-workflows-ref.git
 cd github-workflows-ref
 pipenv install --dev
 
+# Install pre-commit hooks (one-time — mirrors CI lint + secret scan locally)
+pipenv run pre-commit install
+pipenv run pre-commit install --hook-type pre-push
+
 # Run locally
 pipenv run python manage.py migrate
 pipenv run python manage.py runserver
@@ -84,6 +88,20 @@ Documented in [`docs/`](docs/) with exact settings and API commands:
 
 - Python 3.13, Django 5+, HTMX
 - pipenv for dependency management
-- PostgreSQL (production) / SQLite (local)
+- SQLite everywhere — see note below
 - Render for hosting
 - GitHub Actions for CI/CD
+
+### Why SQLite?
+
+This repo exists to exercise GitHub CI/CD pipelines, not to run a real app.
+SQLite keeps every environment self-contained: no database service to
+provision, no 90-day Render Postgres clock to track, no `DATABASE_URL` to
+thread through feature envs. Migrations rebuild the schema on every boot,
+`/health/` answers 200, the deploy workflow verifies end-to-end. Data does
+not persist across redeploys — that's fine here.
+
+If you fork this as a template for a real app, swap back to Postgres by
+restoring a `databases:` block in `render.yaml` and adding `DATABASE_URL`
+to the service envVars — `config/settings.py` already picks it up via
+`dj-database-url` when set.

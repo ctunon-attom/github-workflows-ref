@@ -8,10 +8,6 @@ services:
     autoDeploy: false
     healthCheckPath: /health/
     envVars:
-      - key: DATABASE_URL
-        fromDatabase:
-          name: github-workflows-ref-db
-          property: connectionString
       - key: SECRET_KEY
         generateValue: true
       - key: DJANGO_ALLOWED_HOSTS
@@ -20,8 +16,3 @@ services:
         value: "https://github-workflows-ref.onrender.com"
       - key: DEBUG
         value: "False"
-
-databases:
-  - name: github-workflows-ref-db
-    plan: free
-    databaseName: taskapp

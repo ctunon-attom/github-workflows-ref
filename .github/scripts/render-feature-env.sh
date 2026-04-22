@@ -19,8 +19,6 @@ set -euo pipefail
 
 RENDER_API="https://api.render.com/v1"
 RENDER_REGION="${RENDER_REGION:-oregon}"
-DB_POLL_TIMEOUT=300
-DB_POLL_INTERVAL=10
 DEPLOY_POLL_TIMEOUT=600
 DEPLOY_POLL_INTERVAL=15
 BLUEPRINT_PATH="${BLUEPRINT_PATH:-.config/feature/render.yaml}"
@@ -75,14 +73,12 @@ render_api() {
 
 # -----------------------------------------------------------------------------
 # Render the blueprint template with variable substitution.
-# Usage: render_blueprint <slug> <branch> <database_url>
+# Usage: render_blueprint <slug> <branch>
 # Outputs: the rendered YAML to stdout
 # -----------------------------------------------------------------------------
 render_blueprint() {
   local slug="$1"
   local branch="$2"
-  local database_url="${3:-}"
-  local slug_underscore="${slug//-/_}"
 
   if [ ! -f "$BLUEPRINT_PATH" ]; then
     echo "ERROR: Blueprint template not found at $BLUEPRINT_PATH" >&2
@@ -91,34 +87,8 @@ render_blueprint() {
 
   sed \
     -e "s|{{SLUG}}|${slug}|g" \
-    -e "s|{{SLUG_UNDERSCORE}}|${slug_underscore}|g" \
     -e "s|{{BRANCH}}|${branch}|g" \
-    -e "s|{{DATABASE_URL}}|${database_url}|g" \
     "$BLUEPRINT_PATH"
-}
-
-# -----------------------------------------------------------------------------
-# Parse a database definition from the rendered blueprint and build the
-# Render API request body.
-# Usage: parse_db_spec <rendered_yaml> <index>
-# Outputs: JSON body for POST /postgres
-# -----------------------------------------------------------------------------
-parse_db_spec() {
-  local yaml="$1"
-  local idx="${2:-0}"
-
-  echo "$yaml" | yq -o=json ".databases[$idx]" | jq \
-    --arg ownerId "$RENDER_OWNER_ID" \
-    --arg region "$RENDER_REGION" \
-    '{
-      name: .name,
-      plan: .plan,
-      ownerId: $ownerId,
-      version: .version,
-      region: $region,
-      databaseName: .databaseName,
-      databaseUser: .databaseUser
-    }'
 }
 
 # -----------------------------------------------------------------------------
@@ -179,12 +149,6 @@ find_service_by_name() {
     | jq -r '.[0].service.id // empty'
 }
 
-find_postgres_by_name() {
-  local name="$1"
-  render_api GET "/postgres?name=${name}&ownerId=${RENDER_OWNER_ID}&limit=1" \
-    | jq -r '.[0].postgres.id // empty'
-}
-
 count_feature_envs() {
   local count=0
   local cursor=""
@@ -225,33 +189,6 @@ list_feature_envs() {
     cursor="$next_cursor"
   done
   echo "$result"
-}
-
-wait_for_postgres() {
-  local pg_id="$1"
-  local elapsed=0
-  while [ "$elapsed" -lt "$DB_POLL_TIMEOUT" ]; do
-    local status
-    status=$(render_api GET "/postgres/$pg_id" | jq -r '.status // empty')
-    echo "  [${elapsed}s] postgres: ${status:-unknown}" >&2
-    if [ "$status" = "available" ]; then
-      return 0
-    fi
-    if [ "$status" = "unavailable" ] || [ "$status" = "suspended" ]; then
-      echo "ERROR: PostgreSQL entered status: $status" >&2
-      return 1
-    fi
-    sleep "$DB_POLL_INTERVAL"
-    elapsed=$((elapsed + DB_POLL_INTERVAL))
-  done
-  echo "ERROR: PostgreSQL timed out after ${DB_POLL_TIMEOUT}s." >&2
-  return 1
-}
-
-get_connection_info() {
-  local pg_id="$1"
-  render_api GET "/postgres/$pg_id/connection-info" \
-    | jq '{ internal: .internalConnectionString, external: .externalConnectionString }'
 }
 
 cancel_auto_deploy() {
@@ -322,12 +259,6 @@ delete_service() {
   render_api DELETE "/services/$service_id" > /dev/null
 }
 
-delete_postgres() {
-  local pg_id="$1"
-  echo "Deleting postgres: $pg_id" >&2
-  render_api DELETE "/postgres/$pg_id" > /dev/null
-}
-
 # =============================================================================
 # ORCHESTRATORS (blueprint-driven)
 # =============================================================================
@@ -357,9 +288,12 @@ create_feature_env() {
     return 1
   fi
 
+  local rendered
+  rendered=$(render_blueprint "$slug" "$branch")
+
   # Idempotency — check first service name from blueprint
   local first_svc_name
-  first_svc_name=$(render_blueprint "$slug" "$branch" "" | yq '.services[0].name')
+  first_svc_name=$(echo "$rendered" | yq '.services[0].name')
   local existing_id
   existing_id=$(find_service_by_name "$first_svc_name")
   if [ -n "$existing_id" ]; then
@@ -372,46 +306,7 @@ create_feature_env() {
     return 0
   fi
 
-  # --- 1. Create databases from blueprint ---
-  local rendered
-  rendered=$(render_blueprint "$slug" "$branch" "PLACEHOLDER")
-
-  local db_count
-  db_count=$(echo "$rendered" | yq '.databases | length')
-
-  local pg_ids=()
-  local db_internal=""
-  for (( i=0; i<db_count; i++ )); do
-    local db_body db_name
-    db_body=$(parse_db_spec "$rendered" "$i")
-    db_name=$(echo "$db_body" | jq -r '.name')
-
-    echo "Creating database: $db_name" >&2
-    local response pg_id
-    response=$(render_api POST /postgres "$db_body")
-    pg_id=$(echo "$response" | jq -r '.id // empty')
-
-    if [ -z "$pg_id" ]; then
-      echo "ERROR: Failed to create database. Response: $response" >&2
-      return 1
-    fi
-
-    echo "  Created: $pg_id — waiting for availability..." >&2
-    wait_for_postgres "$pg_id"
-    pg_ids+=("$pg_id")
-
-    # Use first database's internal URL for DATABASE_URL substitution
-    if [ "$i" -eq 0 ]; then
-      local conn_info
-      conn_info=$(get_connection_info "$pg_id")
-      db_internal=$(echo "$conn_info" | jq -r '.internal')
-    fi
-  done
-
-  # --- 2. Re-render blueprint with actual DATABASE_URL ---
-  rendered=$(render_blueprint "$slug" "$branch" "$db_internal")
-
-  # --- 3. Create services from blueprint ---
+  # --- Create services from blueprint ---
   local svc_count
   svc_count=$(echo "$rendered" | yq '.services | length')
 
@@ -445,7 +340,7 @@ create_feature_env() {
     echo "  Created: $service_id" >&2
   done
 
-  # --- 4. Trigger deploys on all services ---
+  # --- Trigger deploys on all services ---
   echo "Triggering deploys..." >&2
   local web_deploy_id=""
   for sid in "${service_ids[@]}"; do
@@ -460,7 +355,7 @@ create_feature_env() {
     fi
   done
 
-  # --- 5. Poll web deploy ---
+  # --- Poll web deploy ---
   if [ -n "$web_deploy_id" ]; then
     poll_feature_deploy "$web_id" "$web_deploy_id" || {
       echo "WARNING: Web deploy did not reach live state." >&2
@@ -475,17 +370,15 @@ create_feature_env() {
     --arg slug "$slug" \
     --arg web_id "$web_id" \
     --arg web_url "$web_url" \
-    --arg pg_ids "$(IFS=,; echo "${pg_ids[*]}")" \
     '{
       slug: $slug,
       web_service_id: $web_id,
-      web_url: $web_url,
-      postgres_ids: ($pg_ids | split(","))
+      web_url: $web_url
     }'
 }
 
 # -----------------------------------------------------------------------------
-# Destroy a feature environment. Finds all services/databases by name prefix.
+# Destroy a feature environment. Finds all services by name prefix.
 # Usage: destroy_feature_env <slug>
 # -----------------------------------------------------------------------------
 destroy_feature_env() {
@@ -494,7 +387,6 @@ destroy_feature_env() {
 
   echo "Destroying feature environment: ref-feat-${slug}" >&2
 
-  # Delete all services matching prefix
   local cursor=""
   while true; do
     local url="/services?ownerId=${RENDER_OWNER_ID}&limit=100"
@@ -515,13 +407,6 @@ destroy_feature_env() {
     fi
     cursor="$next_cursor"
   done
-
-  # Delete postgres by name
-  local pg_id
-  pg_id=$(find_postgres_by_name "ref-feat-${slug}-db")
-  if [ -n "$pg_id" ]; then
-    delete_postgres "$pg_id"
-  fi
 
   echo "Feature environment ref-feat-${slug} destroyed." >&2
 }
