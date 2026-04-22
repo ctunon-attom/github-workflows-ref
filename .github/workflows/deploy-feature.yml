@@ -1,0 +1,307 @@
+name: Deploy Feature Environment
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review, closed]
+    branches: [staging]
+  workflow_dispatch:
+    inputs:
+      branch:
+        description: "Feature branch name"
+        required: true
+        type: string
+      recreate:
+        description: "Destroy and recreate the environment"
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+  pull-requests: write
+  checks: read
+
+defaults:
+  run:
+    shell: bash -euo pipefail {0}
+
+concurrency:
+  group: feature-env-${{ github.head_ref || inputs.branch }}
+  cancel-in-progress: false
+
+jobs:
+  # --------------------------------------------------------------------------
+  # Wait for CI to pass before deploying
+  # --------------------------------------------------------------------------
+  wait-for-ci:
+    runs-on: ubuntu-latest
+    if: >-
+      github.event.action != 'closed'
+      && github.event.pull_request.draft != true
+    steps:
+      - name: Wait for CI to succeed
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          echo "Waiting for CI check 'Test' on $SHA..."
+          for i in $(seq 1 60); do
+            result=$(gh api "repos/${{ github.repository }}/commits/${SHA}/check-runs" \
+              --jq '.check_runs[] | select(.name == "Test") | .conclusion // .status' | head -1)
+            case "$result" in
+              success)
+                echo "CI passed."
+                exit 0 ;;
+              failure|cancelled|timed_out|action_required|stale)
+                echo "CI failed with: $result"
+                exit 1 ;;
+              *)
+                echo "  Attempt $i/60: status=$result — waiting 15s..."
+                sleep 15 ;;
+            esac
+          done
+          echo "Timed out waiting for CI."
+          exit 1
+
+  # --------------------------------------------------------------------------
+  # Deploy: create or redeploy feature environment
+  # --------------------------------------------------------------------------
+  deploy:
+    runs-on: ubuntu-latest
+    needs: wait-for-ci
+    if: >-
+      github.event.action != 'closed'
+      && github.event.pull_request.draft != true
+    env:
+      RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
+      RENDER_OWNER_ID: ${{ secrets.RENDER_OWNER_ID }}
+      RENDER_REPO_URL: https://github.com/${{ github.repository }}
+      RENDER_REGION: oregon
+      FEATURE_ENV_MAX: "3"
+      DRY_RUN: ${{ secrets.RENDER_API_KEY == '' && 'true' || 'false' }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+
+      - name: Derive slug
+        id: slug
+        env:
+          BRANCH: ${{ github.head_ref || inputs.branch }}
+        run: |
+          source .github/scripts/render-feature-env.sh
+          SLUG=$(sanitize_branch_name "$BRANCH")
+          echo "branch=$BRANCH" >> "$GITHUB_OUTPUT"
+          echo "slug=$SLUG" >> "$GITHUB_OUTPUT"
+          echo "Slug: $SLUG (from branch: $BRANCH)"
+
+      - name: Check for existing environment
+        id: check
+        env:
+          SLUG: ${{ steps.slug.outputs.slug }}
+        run: |
+          if [ "$DRY_RUN" = "true" ]; then
+            echo "::notice::DRY RUN — simulating environment check"
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          source .github/scripts/render-feature-env.sh
+          WEB_ID=$(find_service_by_name "ref-feat-${SLUG}-web")
+          if [ -n "$WEB_ID" ]; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+            echo "web_id=$WEB_ID" >> "$GITHUB_OUTPUT"
+            echo "Feature env exists (web: $WEB_ID)"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+            echo "Feature env does not exist — will create."
+          fi
+
+      - name: Destroy existing (recreate mode)
+        if: inputs.recreate == true && steps.check.outputs.exists == 'true' && env.DRY_RUN != 'true'
+        env:
+          SLUG: ${{ steps.slug.outputs.slug }}
+        run: |
+          source .github/scripts/render-feature-env.sh
+          destroy_feature_env "$SLUG"
+
+      - name: Create feature environment
+        id: create
+        if: (steps.check.outputs.exists == 'false' || inputs.recreate == true)
+        env:
+          SLUG: ${{ steps.slug.outputs.slug }}
+          FEAT_BRANCH: ${{ steps.slug.outputs.branch }}
+        run: |
+          if [ "$DRY_RUN" = "true" ]; then
+            echo "::notice::DRY RUN — would create feature env ref-feat-${SLUG}"
+            echo "web_url=https://ref-feat-${SLUG}-web.onrender.com" >> "$GITHUB_OUTPUT"
+            echo "created=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          source .github/scripts/render-feature-env.sh
+          RESULT=$(create_feature_env "$FEAT_BRANCH" "$SLUG" "free" "free")
+          WEB_URL=$(echo "$RESULT" | jq -r '.web_url')
+          WEB_ID=$(echo "$RESULT" | jq -r '.web_service_id')
+          echo "web_url=$WEB_URL" >> "$GITHUB_OUTPUT"
+          echo "web_id=$WEB_ID" >> "$GITHUB_OUTPUT"
+          echo "created=true" >> "$GITHUB_OUTPUT"
+
+      - name: Redeploy existing environment
+        id: redeploy
+        if: steps.check.outputs.exists == 'true' && inputs.recreate != true && env.DRY_RUN != 'true'
+        env:
+          SLUG: ${{ steps.slug.outputs.slug }}
+          WEB_ID: ${{ steps.check.outputs.web_id }}
+        run: |
+          source .github/scripts/render-feature-env.sh
+          DEPLOY_ID=$(trigger_feature_deploy "$WEB_ID")
+          echo "Triggered deploy: $DEPLOY_ID"
+          poll_feature_deploy "$WEB_ID" "$DEPLOY_ID" || {
+            echo "WARNING: Deploy did not reach live state."
+          }
+          echo "web_url=https://ref-feat-${SLUG}-web.onrender.com" >> "$GITHUB_OUTPUT"
+          echo "web_id=$WEB_ID" >> "$GITHUB_OUTPUT"
+
+      - name: Smoke check
+        if: env.DRY_RUN != 'true' && (steps.create.outputs.web_url != '' || steps.redeploy.outputs.web_url != '')
+        env:
+          WEB_URL: ${{ steps.create.outputs.web_url || steps.redeploy.outputs.web_url }}
+        run: |
+          curl --fail --retry 5 --retry-delay 15 --retry-all-errors \
+               --silent --show-error -o /dev/null -w "HTTP %{http_code}\n" \
+               "$WEB_URL/health/"
+
+      - name: Comment on PR
+        if: >-
+          github.event_name == 'pull_request' &&
+          (steps.create.outputs.web_url != '' || steps.redeploy.outputs.web_url != '')
+        uses: actions/github-script@60a0d83039c74a4aee543508d2ffcb1c3799cdea  # v7.0.1
+        env:
+          SLUG: ${{ steps.slug.outputs.slug }}
+          WEB_URL: ${{ steps.create.outputs.web_url || steps.redeploy.outputs.web_url }}
+          CREATED: ${{ steps.create.outputs.created }}
+          DRY_RUN: ${{ env.DRY_RUN }}
+        with:
+          script: |
+            const slug = process.env.SLUG;
+            const webUrl = process.env.WEB_URL;
+            const isNew = process.env.CREATED === 'true';
+            const isDryRun = process.env.DRY_RUN === 'true';
+
+            const status = isDryRun ? 'Simulated (dry run)' : (isNew ? 'Created' : 'Redeployed');
+            const marker = `<!-- feature-env-${slug} -->`;
+            const body = [
+              marker,
+              `### Feature Environment ${status}`,
+              '',
+              `| | |`,
+              `|---|---|`,
+              `| **URL** | ${webUrl}/health/ |`,
+              `| **Branch** | \`${process.env.SLUG}\` |`,
+              isDryRun ? `| **Mode** | Dry run (no Render secrets configured) |` : '',
+              '',
+              `> This environment will be automatically destroyed when the PR is closed.`,
+            ].filter(Boolean).join('\n');
+
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+            });
+
+            const existing = comments.find(c => c.body.includes(marker));
+
+            if (existing) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: existing.id,
+                body: body,
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+                body: body,
+              });
+            }
+
+  # --------------------------------------------------------------------------
+  # Teardown: destroy feature environment when PR is closed
+  # --------------------------------------------------------------------------
+  teardown:
+    runs-on: ubuntu-latest
+    if: >-
+      github.event_name == 'pull_request'
+      && github.event.action == 'closed'
+    env:
+      RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
+      RENDER_OWNER_ID: ${{ secrets.RENDER_OWNER_ID }}
+      DRY_RUN: ${{ secrets.RENDER_API_KEY == '' && 'true' || 'false' }}
+
+    steps:
+      - name: Checkout scripts
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+        with:
+          sparse-checkout: .github/scripts/
+          sparse-checkout-cone-mode: false
+
+      - name: Derive slug
+        id: slug
+        env:
+          BRANCH: ${{ github.head_ref }}
+        run: |
+          source .github/scripts/render-feature-env.sh
+          SLUG=$(sanitize_branch_name "$BRANCH")
+          echo "slug=$SLUG" >> "$GITHUB_OUTPUT"
+
+      - name: Destroy feature environment
+        env:
+          SLUG: ${{ steps.slug.outputs.slug }}
+        run: |
+          if [ "$DRY_RUN" = "true" ]; then
+            echo "::notice::DRY RUN — would destroy feature env ref-feat-${SLUG}"
+            exit 0
+          fi
+          source .github/scripts/render-feature-env.sh
+          destroy_feature_env "$SLUG"
+
+      - name: Comment on PR — destroyed
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@60a0d83039c74a4aee543508d2ffcb1c3799cdea  # v7.0.1
+        env:
+          SLUG: ${{ steps.slug.outputs.slug }}
+        with:
+          script: |
+            const slug = process.env.SLUG;
+            const marker = `<!-- feature-env-${slug} -->`;
+            const body = [
+              marker,
+              `### Feature Environment Destroyed`,
+              '',
+              `The preview environment for \`${slug}\` has been torn down.`,
+            ].join('\n');
+
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+            });
+
+            const existing = comments.find(c => c.body.includes(marker));
+
+            if (existing) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: existing.id,
+                body: body,
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+                body: body,
+              });
+            }

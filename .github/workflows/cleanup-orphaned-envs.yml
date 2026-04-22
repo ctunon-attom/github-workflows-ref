@@ -1,0 +1,162 @@
+name: Cleanup Orphaned Feature Environments
+
+on:
+  schedule:
+    - cron: "0 6 * * 1"  # Monday 06:00 UTC
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "List orphans without deleting"
+        required: false
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+  pull-requests: read
+
+defaults:
+  run:
+    shell: bash -euo pipefail {0}
+
+concurrency:
+  group: orphan-cleanup
+  cancel-in-progress: false
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
+      RENDER_OWNER_ID: ${{ secrets.RENDER_OWNER_ID }}
+      DRY_RUN: ${{ secrets.RENDER_API_KEY == '' && 'true' || 'false' }}
+
+    steps:
+      - name: Checkout scripts
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+        with:
+          sparse-checkout: .github/scripts/
+          sparse-checkout-cone-mode: false
+
+      - name: Detect orphaned environments
+        id: detect
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          if [ "$DRY_RUN" = "true" ]; then
+            echo "::notice::DRY RUN — no Render secrets configured. Skipping orphan detection."
+            echo "orphan_count=0" >> "$GITHUB_OUTPUT"
+            echo "[]" > "$RUNNER_TEMP/orphans.json"
+            exit 0
+          fi
+
+          source .github/scripts/render-feature-env.sh
+
+          echo "=== Active feature environments ==="
+          ACTIVE_ENVS=$(list_feature_envs)
+
+          if ! echo "$ACTIVE_ENVS" | jq -e 'type == "array"' > /dev/null 2>&1; then
+            echo "ERROR: Unexpected response: $ACTIVE_ENVS" >&2
+            exit 1
+          fi
+
+          echo "$ACTIVE_ENVS" | jq -r '.[].name'
+
+          ACTIVE_SLUGS=$(echo "$ACTIVE_ENVS" | jq -r '
+            [.[] | .name | select(endswith("-web"))
+              | ltrimstr("ref-feat-") | rtrimstr("-web")]
+            | unique | .[]')
+
+          if [ -z "$ACTIVE_SLUGS" ]; then
+            echo "No active feature environments."
+            echo "orphan_count=0" >> "$GITHUB_OUTPUT"
+            echo "[]" > "$RUNNER_TEMP/orphans.json"
+            exit 0
+          fi
+
+          echo ""
+          echo "=== Open PRs against staging ==="
+          OPEN_PR_SLUGS=$(gh pr list \
+            --repo "$GH_REPO" \
+            --base staging \
+            --state open \
+            --json headRefName \
+            --jq '.[].headRefName' \
+            | while read -r branch; do
+                sanitize_branch_name "$branch"
+              done | sort -u)
+
+          echo "Open PR slugs: $OPEN_PR_SLUGS"
+
+          echo ""
+          echo "=== Checking for orphans ==="
+          ORPHANS="[]"
+          while IFS= read -r slug; do
+            [ -z "$slug" ] && continue
+            if ! echo "$OPEN_PR_SLUGS" | grep -qx "$slug"; then
+              echo "ORPHAN: ref-feat-${slug} (no open PR)"
+              CREATED=$(echo "$ACTIVE_ENVS" | jq -r \
+                --arg name "ref-feat-${slug}-web" \
+                '.[] | select(.name == $name) | .createdAt // "unknown"')
+              ORPHANS=$(echo "$ORPHANS" | jq \
+                --arg slug "$slug" \
+                --arg created "$CREATED" \
+                '. + [{ slug: $slug, created: $created }]')
+            else
+              echo "OK: ref-feat-${slug} has an open PR"
+            fi
+          done <<< "$ACTIVE_SLUGS"
+
+          ORPHAN_COUNT=$(echo "$ORPHANS" | jq length)
+          echo "Found $ORPHAN_COUNT orphaned environment(s)."
+          echo "$ORPHANS" > "$RUNNER_TEMP/orphans.json"
+          echo "orphan_count=$ORPHAN_COUNT" >> "$GITHUB_OUTPUT"
+
+      - name: Destroy orphaned environments
+        if: >-
+          steps.detect.outputs.orphan_count != '0' &&
+          (github.event_name == 'schedule' || inputs.dry_run == false)
+        run: |
+          source .github/scripts/render-feature-env.sh
+
+          SLUGS=$(jq -r '.[].slug' "$RUNNER_TEMP/orphans.json")
+          FAILED=0
+
+          while IFS= read -r slug; do
+            [ -z "$slug" ] && continue
+            echo "Destroying orphaned env: ref-feat-${slug}"
+            if ! destroy_feature_env "$slug"; then
+              FAILED=$((FAILED + 1))
+            fi
+          done <<< "$SLUGS"
+
+          if [ "$FAILED" -gt 0 ]; then
+            echo "ERROR: $FAILED environment(s) failed to destroy." >&2
+            exit 1
+          fi
+
+      - name: Summary
+        if: always()
+        env:
+          ORPHAN_COUNT: ${{ steps.detect.outputs.orphan_count }}
+        run: |
+          COUNT="${ORPHAN_COUNT:-0}"
+          echo "## Orphan Cleanup Summary" >> "$GITHUB_STEP_SUMMARY"
+
+          if [ ! -f "$RUNNER_TEMP/orphans.json" ]; then
+            echo "Detection did not complete." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+
+          if [ "$COUNT" = "0" ]; then
+            echo "No orphaned feature environments found." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+
+          echo "Found **${COUNT}** orphaned environment(s):" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Slug | Created |" >> "$GITHUB_STEP_SUMMARY"
+          echo "|------|---------|" >> "$GITHUB_STEP_SUMMARY"
+          jq -r '.[] | "| \`\(.slug)\` | \(.created) |"' "$RUNNER_TEMP/orphans.json" >> "$GITHUB_STEP_SUMMARY"
