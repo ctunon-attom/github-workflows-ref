@@ -68,4 +68,9 @@ def task_toggle(request, pk):
 
 
 def health(request):
+    """Liveness probe used by Render's health check.
+
+    Returns HTTP 200 with a small JSON body so the platform can distinguish
+    a healthy process from one that is still starting or crash-looping.
+    """
     return JsonResponse({"status": "ok"})
