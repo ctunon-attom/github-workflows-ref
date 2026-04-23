@@ -1,3 +1,4 @@
+from django.db import connection
 from django.http import HttpResponse, JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
 
@@ -65,6 +66,16 @@ def task_toggle(request, pk):
             return render(request, "taskapp/partials/task_row.html", {"task": task})
         return redirect("taskapp:task_list")
     return redirect("taskapp:task_list")
+
+
+def task_search(request):
+    query = request.GET.get("q", "")
+    sql = "SELECT id, title, completed FROM taskapp_task WHERE title LIKE '%" + query + "%'"
+    with connection.cursor() as cursor:
+        cursor.execute(sql)
+        rows = cursor.fetchall()
+    results = [{"id": r[0], "title": r[1], "completed": bool(r[2])} for r in rows]
+    return JsonResponse({"results": results})
 
 
 def health(request):
