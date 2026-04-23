@@ -50,6 +50,8 @@ feature/* ──PR──> develop ──push──> staging ──PR──> mast
 |------|---------|-----------|
 | [`ci.yml`](.github/workflows/ci.yml) | Test + lint on push/PR | Lint is **blocking** (no `continue-on-error`), coverage at 80% |
 | [`deploy.yml`](.github/workflows/deploy.yml) | Deploy to Render after CI passes | Single workflow, environment resolved from branch. Every deploy has an `environment:` key (was missing on production in audited repo) |
+| [`deploy-feature.yml`](.github/workflows/deploy-feature.yml) | Per-PR Render preview envs (create/redeploy on open/sync, teardown on close) | Previews were ad-hoc; now blueprint-driven and auto-torn-down |
+| [`cleanup-orphaned-envs.yml`](.github/workflows/cleanup-orphaned-envs.yml) | Weekly sweep of feature envs without an open PR | Orphan envs accumulated indefinitely in the audited repo |
 | [`codeql.yml`](.github/workflows/codeql.yml) | Static analysis (weekly + on push) | Was completely absent |
 
 ## Governance Controls
