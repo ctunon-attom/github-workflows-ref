@@ -5,6 +5,26 @@ reviews:
   high_level_summary: true
   poem: false
   review_status: true
+
+  # Wait for and ingest GitHub Check Runs (CodeQL Code Scanning, CI, etc.)
+  # so CodeRabbit sees their findings and doesn't re-derive them from scratch.
+  # Default timeout is 90s, which is shorter than a typical CodeQL Python run;
+  # bumping to 10 min lets the review wait for the real result.
+  tools:
+    github-checks:
+      enabled: true
+      timeout_ms: 600000
+
+  # Keep CodeRabbit focused on issues CodeQL can't catch (design, readability,
+  # API contracts, test coverage, doc drift). Avoid duplicating findings that
+  # CodeQL already surfaces as code-scanning alerts on the PR.
+  tone_instructions: >
+    GitHub Code Scanning (CodeQL) runs on every PR to master. If a finding is
+    already reported by CodeQL as a code-scanning alert on this PR, do not
+    restate it — acknowledge it briefly and spend the review budget on issues
+    CodeQL can't catch: design choices, readability, test coverage gaps, API
+    contract changes, documentation drift, and business-logic correctness.
+
   path_instructions:
     - path: ".github/workflows/**"
       instructions: >
@@ -25,8 +45,11 @@ reviews:
         for production, DEBUG defaults, ALLOWED_HOSTS, CSRF settings.
     - path: "taskapp/views.py"
       instructions: >
-        Review for OWASP top 10: check for injection, broken access control,
-        CSRF protection, and proper input validation.
+        Review for OWASP issues CodeQL typically misses: business-logic
+        authorization bypasses, CSRF on state-changing endpoints, IDOR,
+        input validation gaps on non-string shapes (lists, dicts, files),
+        and missing rate limiting. Defer raw injection/XSS patterns to
+        CodeQL unless you see something it would not catch.
 
 chat:
   auto_reply: true
