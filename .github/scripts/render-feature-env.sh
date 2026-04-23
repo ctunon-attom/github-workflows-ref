@@ -150,20 +150,22 @@ parse_service_spec() {
         else "no"
         end
       ),
-      serviceDetails: {
-        runtime: $runtime,
-        plan: .plan,
-        region: $region,
-        numInstances: (.numInstances // 1),
-        envSpecificDetails: (
-          if $runtime == "docker" then
-            { dockerfilePath: .dockerfilePath, dockerContext: "." }
-          else
-            { buildCommand: .buildCommand, startCommand: .startCommand }
-          end
-        )
-      }
-      + if .healthCheckPath then { healthCheckPath: .healthCheckPath } else {} end,
+      serviceDetails: (
+        {
+          runtime: $runtime,
+          plan: .plan,
+          region: $region,
+          numInstances: (.numInstances // 1),
+          envSpecificDetails: (
+            if $runtime == "docker" then
+              { dockerfilePath: .dockerfilePath, dockerContext: "." }
+            else
+              { buildCommand: .buildCommand, startCommand: .startCommand }
+            end
+          )
+        }
+        + (if .healthCheckPath then { healthCheckPath: .healthCheckPath } else {} end)
+      ),
       envVars: .envVars
     }'
 }
