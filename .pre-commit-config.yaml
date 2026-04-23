@@ -44,7 +44,7 @@ repos:
     hooks:
       - id: pytest-picked
         name: pytest (tests for files changed vs. master)
-        entry: pipenv run pytest --picked --mode=branch --parent-branch=master
+        entry: bash -c 'pipenv run pytest --picked --mode=branch --parent-branch=master || [ $? -eq 5 ]'
         language: system
         stages: [pre-push]
         pass_filenames: false
