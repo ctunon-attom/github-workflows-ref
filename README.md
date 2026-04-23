@@ -77,13 +77,13 @@ Documented in [`docs/`](docs/) with exact settings and API commands:
 
 ## Environment Setup on GitHub
 
-1. **Create environments** in Settings → Environments: `production`, `staging`, `development`
+1. **Create environments** in Settings → Environments: `production`, `staging`, `development`, `preview`
 2. **Add secrets** to each environment per [SECRET_SCOPING.md](docs/SECRET_SCOPING.md)
 3. **Set deployment branch policies** (requires Pro/Team):
    - `production` → `master`
    - `staging` → `staging`
    - `development` → `develop`
-4. **Add required reviewers** on `production` (requires Pro/Team)
+4. **Add required reviewers** on `production` and `preview`. `production` gates merges to master; `preview` gates every Render feature-env deploy, so reviewers see and approve each per-PR preview before it consumes a free-tier slot.
 5. **Apply repo settings** per [REPO_SETTINGS.md](docs/REPO_SETTINGS.md)
 
 ## Stack
