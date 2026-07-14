@@ -1,7 +1,7 @@
 {
     "_meta": {
         "hash": {
-            "sha256": "f1bbd3c38b9c9045edb91a42ac582f85310140e8d79e2194c7147f2929293a4e"
+            "sha256": "f52046519b132ec1b54f4eeb0ed8dc134375e73e07db73553d7514162c01ffe3"
         },
         "pipfile-spec": 6,
         "requires": {
@@ -18,11 +18,11 @@
     "default": {
         "asgiref": {
             "hashes": [
-                "sha256:5f184dc43b7e763efe848065441eac62229c9f7b0475f41f80e207a114eda4ce",
-                "sha256:e8667a091e69529631969fd45dc268fa79b99c92c5fcdda727757e52146ec133"
+                "sha256:59dcb51c272ad209d59bed5708a64a333083e86017d7fcdd67498eeab7784340",
+                "sha256:fe386d1c2bff7259ea95929266d12a8cf9a8b5a1c2598402967d8792e7a7c094"
             ],
-            "markers": "python_version >= '3.9'",
-            "version": "==3.11.1"
+            "markers": "python_version >= '3.10'",
+            "version": "==3.12.1"
         },
         "dj-database-url": {
             "hashes": [
@@ -35,21 +35,21 @@
         },
         "django": {
             "hashes": [
-                "sha256:14359c809fc16e8f81fd2b59d7d348e4d2d799da6840b10522b6edf7b8afc1da",
-                "sha256:8cfa2572b3f2768b2e84983cf3c4811877a01edb64e817986ec5d60751c113ac"
+                "sha256:2998503fc083124fb58037084bfa00de323c7c743f05f1b4284e77bff0ab8890",
+                "sha256:a037427c2288443a8c02a1b02295a31c239663aa682bc50b1976afb7cf6a769e"
             ],
             "index": "pypi",
             "markers": "python_version >= '3.12'",
-            "version": "==6.0.4"
+            "version": "==6.0.7"
         },
         "django-htmx": {
             "hashes": [
-                "sha256:036e5da801bfdf5f1ca815f21592cfb9f004a898f330c842f15e55c70e301a75",
-                "sha256:13e1e13b87d39b57f95aae6e4987cb3df056d0b1373a41f4a94504a00298ffd8"
+                "sha256:699e229de0bbf19b3ee1a5d419702f5c154fa956e6921fec89faa7401b99e536",
+                "sha256:e6911acccf3e7905d511c4fd6ab86fe06572205e80a0f32ca7aa94a115ae0619"
             ],
             "index": "pypi",
             "markers": "python_version >= '3.10'",
-            "version": "==1.27.0"
+            "version": "==1.28.0"
         },
         "gunicorn": {
             "hashes": [
